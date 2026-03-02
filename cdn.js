@@ -10,6 +10,19 @@ export default {
       const full = target.startsWith('http') ? target : 'https://' + target;
       // 0: CDN
       if (idx === 0) {
+        const m = full.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    // 短链路由: /0/ ~ /6/ + 目标地址
+    const fullPath = url.pathname + url.search;
+    const shortMatch = fullPath.match(/^\/([0-6])\/(.+)$/);
+    if (shortMatch) {
+      const idx = parseInt(shortMatch[1]);
+      const target = shortMatch[2];
+      const full = target.startsWith('http') ? target : 'https://' + target;
+      // 0: CDN
+      if (idx === 0) {
         const m = full.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)/);
         if (!m) return new Response('格式错误', { status: 400 });
         return Response.redirect(CDN_PREFIX + m[1] + '/' + m[2] + '@' + m[3] + '/' + m[4], 302);
@@ -65,9 +78,9 @@ const GH_PROXY_1 = 'https://gh-proxy.com/';
 const GH_PROXY_2 = 'https://gh.llkk.cc/';
 const GH_PROXY_3 = 'https://gh-proxy.org/';
 
-const SUB_TPL_1 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/Template/a.yml';
-const SUB_TPL_2 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/Template/b.yml';
-const SUB_TPL_3 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/Template/c.yml';
+const SUB_TPL_1 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/a.yml';
+const SUB_TPL_2 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/b.yml';
+const SUB_TPL_3 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/c.yml';
 
 const HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -157,7 +170,7 @@ body{
     <a id="o1">等待输入</a>
   </div>
   <div class="row">
-    <input id="i2" placeholder="GitHub 链接（gh.llkk.cc）">
+    <input id="i2" placeholder="GitHub 链接（github.akams.cn）">
     <button class="btn-gh" onclick="gh(2,1)">加速</button>
     <a id="o2">等待输入</a>
   </div>
