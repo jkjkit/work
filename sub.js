@@ -15,7 +15,7 @@ export default {
   },
 };
 
-const TEMPLATE_URL = "https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/mihomo.yaml";
+const TEMPLATE_URL = "https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/Clash.yaml";
 const TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const TOKEN_LEN = 6;
 
@@ -336,7 +336,10 @@ function yVal(v) {
     return `{ ${kv.join(", ")} }`;
   }
 
-  return String(v ?? "");
+  const s = String(v ?? "");
+  // 含特殊字符时加双引号
+  if (/[:{}\[\],#&*?|<>=!%@`]/.test(s) || s.includes("'")) return `"${s.replace(/"/g, '\\"')}"`;
+  return s;
 }
 function hostFromWsHeaders(s) {
   const m = String(s || "").match(/^\s*Host\s*:\s*(.+)\s*$/i);
@@ -362,9 +365,18 @@ function normalizeNode(n0) {
   return compact(n);
 }
 function buildInlineYaml(nodes) {
-  return (Array.isArray(nodes) ? nodes : [])
+  const nameCount = {};
+  const normalized = (Array.isArray(nodes) ? nodes : [])
     .map(normalizeNode)
     .filter((n) => n.type && n.server && n.port)
+    .map((n) => {
+      const orig = n.name || "节点";
+      nameCount[orig] = (nameCount[orig] || 0) + 1;
+      if (nameCount[orig] > 1) n = { ...n, name: `${orig} ${nameCount[orig]}` };
+      return n;
+    });
+
+  const yamlLines = normalized
     .map((n) => {
       const kv = Object.entries(n)
         .filter(([, v]) => v !== "" && v !== null && v !== undefined)
@@ -372,7 +384,84 @@ function buildInlineYaml(nodes) {
         .join(", ");
       return `  - { ${kv} }`;
     })
-    .join("\n");
+    .join("\n") + "\n";
+
+  // 返回节点名称列表供 proxy-groups 替换使用
+  const names = normalized.map((n) => n.name || "节点");
+  return { yamlLines, names };
+}
+
+/* ---------------- proxy-groups name injection ---------------- */
+
+// 将 proxy-groups 中每个 group 的 proxies 列表替换为实际节点名称
+function fixProxyGroups(yaml, nodeNames) {
+  if (!nodeNames.length) return yaml;
+  const lines = yaml.split("\n");
+  const out = [];
+  let inGroups = false;
+  let inProxies = false;
+  let proxiesIndent = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const t = l.trim();
+    const ind = l.length - l.trimStart().length;
+
+    // 进入 proxy-groups 区块
+    if (/^proxy-groups\s*:/.test(t)) {
+      inGroups = true;
+      inProxies = false;
+      out.push(l);
+      continue;
+    }
+
+    // 离开 proxy-groups 区块（遇到同级或更高级的 key）
+    if (inGroups && t && ind === 0 && !/^\s*-/.test(l)) {
+      inGroups = false;
+      inProxies = false;
+    }
+
+    if (!inGroups) {
+      out.push(l);
+      continue;
+    }
+
+    // 新的 group 条目开始，重置 proxies 状态
+    if (/^\s*-\s+name\s*:/.test(l)) {
+      inProxies = false;
+      proxiesIndent = -1;
+      out.push(l);
+      continue;
+    }
+
+    // 遇到 proxies: 行，注入节点名并跳过旧条目
+    if (/^\s*proxies\s*:/.test(l)) {
+      inProxies = true;
+      proxiesIndent = ind;
+      out.push(l);
+      // 注入新节点名称
+      for (const name of nodeNames) {
+        out.push(" ".repeat(ind + 2) + "- " + yVal(name));
+      }
+      // 跳过原有的 proxies 条目
+      while (i + 1 < lines.length) {
+        const nl = lines[i + 1];
+        const nt = nl.trim();
+        const ni = nl.length - nl.trimStart().length;
+        if (nt.startsWith("- ") && ni > proxiesIndent) {
+          i++;
+          continue;
+        }
+        break;
+      }
+      inProxies = false;
+      continue;
+    }
+
+    out.push(l);
+  }
+
+  return out.join("\n");
 }
 
 /* ---------------- apis ---------------- */
@@ -415,13 +504,14 @@ async function apiGen(req, env) {
     const nodes = Array.isArray(body.nodes) ? body.nodes : [];
     if (!nodes.length) return json({ ok: false, error: "缺少 nodes 内容" }, 400);
 
-    const sub = buildInlineYaml(nodes);
-    if (!sub.trim()) return json({ ok: false, error: "没有可用节点可生成" }, 400);
+    const { yamlLines, names } = buildInlineYaml(nodes);
+    if (!yamlLines.trim()) return json({ ok: false, error: "没有可用节点可生成" }, 400);
 
     const t = await uniqueToken(env.SUB_KV);
     if (!t) return json({ ok: false, error: "生成 token 失败，请重试" }, 500);
 
-    await env.SUB_KV.put(t, sub);
+    // 将 yamlLines 和 names 一起存入 KV，以 JSON 格式保存
+    await env.SUB_KV.put(t, JSON.stringify({ yamlLines, names }));
     return json({ ok: true, token: t, message: "已生成新的短链", createdAt: Date.now() });
   } catch (e) {
     return json({ ok: false, error: e?.message || "生成失败" }, 500);
@@ -453,8 +543,24 @@ async function apiSub(url, env) {
     t = m ? m[1] : "";
   if (!t) return new Response("无效订阅参数", { status: 400, headers: { ...cors(), "content-type": "text/plain; charset=UTF-8" } });
 
-  const sub = (await env.SUB_KV.get(t)) || "";
-  if (!sub.trim()) return new Response("订阅不存在", { status: 404, headers: { ...cors(), "content-type": "text/plain; charset=UTF-8" } });
+  const raw = (await env.SUB_KV.get(t)) || "";
+  if (!raw.trim()) return new Response("订阅不存在", { status: 404, headers: { ...cors(), "content-type": "text/plain; charset=UTF-8" } });
+
+  // 兼容旧格式（纯 yamlLines 字符串）和新格式（JSON { yamlLines, names }）
+  let yamlLines = raw;
+  let names = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.yamlLines) {
+      yamlLines = parsed.yamlLines;
+      names = Array.isArray(parsed.names) ? parsed.names : [];
+    }
+  } catch {
+    // 旧格式，从 yamlLines 中提取 name 字段
+    names = [...yamlLines.matchAll(/\bname:\s*"([^"]+)"|name:\s*([^,}\s][^,}]*)/g)]
+      .map((r) => (r[1] || r[2] || "").trim())
+      .filter(Boolean);
+  }
 
   let tpl = "";
   try {
@@ -475,7 +581,10 @@ async function apiSub(url, env) {
     });
   }
 
-  return new Response(mergeTemplate(tpl, sub), {
+  const merged = mergeTemplate(tpl, yamlLines);
+  const final = fixProxyGroups(merged, names);
+
+  return new Response(final, {
     headers: { ...cors(), "content-type": "text/yaml; charset=UTF-8", "cache-control": "no-store" },
   });
 }
@@ -583,7 +692,7 @@ textarea{resize:none;min-height:90px;font-family:ui-monospace,Menlo,monospace;fo
   </button>
 </nav>
 <script>
-
+// Tab switching (mobile only)
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.onclick=()=>{
     const p=tab.dataset.panel;
