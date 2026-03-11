@@ -1,0 +1,321 @@
+export default {
+  async fetch(request) {
+    const html = `
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>直播工具集</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:     #f0ede8;
+  --card:   #faf9f7;
+  --well:   #f0ede8;
+  --border: #ddd8d0;
+  --text:   #2c2825;
+  --muted:  #9c9188;
+  --dim:    #c8c0b6;
+  --accent: #5b7fa6;
+  --green:  #4a9268;
+  --sky:    #3a7ca5;
+  --rose:   #c0614a;
+}
+
+html,body{
+  height:100%;
+  overflow:hidden;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Outfit',sans-serif;
+  font-size:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+#app{
+  width: clamp(600px, 88vw, 1400px);
+  height: 90vh;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.07);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── title ── */
+.apptitle{
+  text-align:center;
+  padding: 14px 0 0;
+  flex-shrink:0;
+}
+.apptitle h1{
+  font-family:'Outfit',sans-serif;
+  font-size:16px;
+  font-weight:500;
+  letter-spacing:.08em;
+  color:var(--muted);
+}
+
+/* ── tab bar ── */
+.tabbar{
+  display:flex;
+  justify-content:center;
+  align-items:stretch;
+  border-bottom:1px solid var(--border);
+  padding:0 24px;
+  flex-shrink:0;
+  height:40px;
+  margin-top:4px;
+}
+.tab{
+  background:none;
+  border:none;
+  border-bottom:2px solid transparent;
+  color:var(--muted);
+  font-family:'Outfit',sans-serif;
+  font-size:13px;
+  font-weight:500;
+  letter-spacing:.04em;
+  padding:0 20px;
+  cursor:pointer;
+  transition:color .18s,border-color .18s;
+  margin-bottom:-1px;
+}
+.tab:hover{color:var(--text);}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent);}
+
+/* ── pages ── */
+.page{display:none;flex-direction:column;flex:1;min-height:0;padding:14px 20px 12px;}
+.page.on{display:flex;}
+
+/* ── two-col layout ── */
+.cols{
+  display:flex;
+  gap:0;
+  flex:1;
+  min-height:0;
+}
+.col{
+  display:flex;
+  flex-direction:column;
+  flex:1;
+  gap:5px;
+  min-height:0;
+}
+.col+.col{padding-left:12px;border-left:1px solid var(--border);}
+.col-head{
+  font-family:'Fira Code',monospace;
+  font-size:10px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--dim);
+}
+
+textarea{
+  flex:1;
+  min-height:0;
+  width:100%;
+  background:var(--well);
+  border:1px solid var(--border);
+  border-radius:7px;
+  color:var(--text);
+  font-family:'Fira Code',monospace;
+  font-size:12px;
+  line-height:1.7;
+  padding:12px 14px;
+  resize:none;
+  transition:border-color .15s,box-shadow .15s;
+}
+textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,127,166,.1);}
+textarea::placeholder{color:var(--dim);font-style:italic;}
+textarea[readonly]{background:#f5f3f0;}
+
+/* ── url row ── */
+.url-row{display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;}
+.url-row input{
+  flex:1;background:var(--well);border:1px solid var(--border);border-radius:7px;
+  color:var(--text);font-family:'Fira Code',monospace;font-size:12px;padding:8px 12px;
+  transition:border-color .15s;
+}
+.url-row input:focus{outline:none;border-color:var(--accent);}
+.url-row input::placeholder{color:var(--dim);font-style:italic;}
+
+/* ── actions ── */
+.actions{
+  display:flex;justify-content:center;gap:8px;padding-top:10px;flex-shrink:0;
+}
+.btn{
+  font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;
+  padding:6px 20px;border-radius:6px;border:1px solid transparent;cursor:pointer;
+  letter-spacing:.02em;transition:filter .15s,transform .1s;
+}
+.btn:hover{filter:brightness(.94);}
+.btn:active{transform:scale(.96);}
+.btn-a{background:#dce8f5;color:var(--sky);border-color:#c2d8ef;}
+.btn-b{background:#d9f0e4;color:var(--green);border-color:#b8dfc9;}
+.btn-c{background:#e8e4de;color:var(--muted);border-color:var(--border);}
+
+/* scrollbar */
+textarea::-webkit-scrollbar{width:5px;}
+textarea::-webkit-scrollbar-track{background:transparent;}
+textarea::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
+::selection{background:rgba(91,127,166,.2);}
+
+/* toast */
+#toast{
+  position:fixed;bottom:24px;left:50%;
+  transform:translateX(-50%) translateY(10px);
+  background:var(--accent);color:#fff;
+  font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;
+  padding:6px 20px;border-radius:20px;pointer-events:none;
+  opacity:0;transition:opacity .25s,transform .25s;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="apptitle"><h1>直播源格式转换</h1></div>
+  <div class="tabbar">
+    <button class="tab on" onclick="sw('m3u',this)">M3U 转换</button>
+    <button class="tab"    onclick="sw('cn',this)">繁简转换</button>
+    <button class="tab"    onclick="sw('dec',this)">接口解密</button>
+  </div>
+
+  <!-- M3U -->
+  <div id="m3u" class="page on">
+    <div class="cols">
+      <div class="col">
+        <span class="col-head">输入</span>
+        <textarea id="m3uIn" placeholder="粘贴 TXT 或 M3U 内容…"></textarea>
+      </div>
+      <div class="col">
+        <span class="col-head">结果</span>
+        <textarea id="m3uOut" placeholder="转换结果…" readonly></textarea>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-a" onclick="toM3U()">TXT → M3U</button>
+      <button class="btn btn-a" onclick="toTXT()">M3U → TXT</button>
+      <button class="btn btn-b" onclick="cp('m3uOut')">复制结果</button>
+      <button class="btn btn-c" onclick="clr('m3uIn','m3uOut')">清除</button>
+    </div>
+  </div>
+
+  <!-- 繁简 -->
+  <div id="cn" class="page">
+    <div class="cols">
+      <div class="col">
+        <span class="col-head">输入</span>
+        <textarea id="cnIn" placeholder="粘贴需要转换的中文…"></textarea>
+      </div>
+      <div class="col">
+        <span class="col-head">结果</span>
+        <textarea id="cnOut" placeholder="转换结果…" readonly></textarea>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-a" onclick="toSimp()">繁 → 简</button>
+      <button class="btn btn-a" onclick="toTrad()">简 → 繁</button>
+      <button class="btn btn-b" onclick="cp('cnOut')">复制结果</button>
+      <button class="btn btn-c" onclick="clr('cnIn','cnOut')">清除</button>
+    </div>
+  </div>
+
+  <!-- 解密 -->
+  <div id="dec" class="page">
+    <div class="url-row">
+      <input id="urlIn" type="text" placeholder="输入需要解密的 URL…">
+      <button class="btn btn-a" onclick="decrypt()">解密</button>
+    </div>
+    <div class="cols">
+      <div class="col">
+        <span class="col-head">解密结果</span>
+        <textarea id="decOut" placeholder="结果将显示在这里…" readonly></textarea>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-b" onclick="cp('decOut')">复制结果</button>
+      <button class="btn btn-c" onclick="clr('urlIn','decOut')">清除</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast">已复制到剪贴板</div>
+
+<script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js"></script>
+<script>
+function sw(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  document.getElementById(id).classList.add('on');
+  btn.classList.add('on');
+}
+function cp(id){
+  navigator.clipboard.writeText(document.getElementById(id).value).catch(()=>{
+    const e=document.getElementById(id);e.select();document.execCommand('copy');
+  });
+  const t=document.getElementById('toast');
+  t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1600);
+}
+function clr(...ids){ids.forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});}
+
+function toM3U(){
+  const lines=document.getElementById('m3uIn').value.trim().split('\\n');
+  let out='#EXTM3U x-tvg-url="https://live.fanmingming.com/e.xml"\\n\\n',g='',first=true;
+  lines.forEach(r=>{
+    const l=r.trim();if(!l)return;
+    if(l.includes(',#genre#')){g=l.split(',')[0];if(!first)out+='\\n';first=false;return;}
+    if(l.includes(',')){const[n,u]=l.split(',');if(u)out+=\`#EXTINF:-1 tvg-name="\${n}" tvg-logo="https://live.fanmingming.com/tv/\${n}.png" group-title="\${g}",\${n}\\n\${u}\\n\`;}
+  });
+  document.getElementById('m3uOut').value=out;
+}
+function toTXT(){
+  const lines=document.getElementById('m3uIn').value.trim().split('\\n');
+  const map=new Map();
+  for(let i=0;i<lines.length;i++){
+    const l=lines[i].trim();if(!l.startsWith('#EXTINF:-1'))continue;
+    const gm=l.match(/group-title="([^"]+)"/),nm=l.match(/,([^,]+)$/);
+    if(gm&&nm&&i+1<lines.length){
+      const g=gm[1],n=nm[1].trim(),u=lines[i+1].trim();
+      if(!map.has(g))map.set(g,[]);map.get(g).push(\`\${n},\${u}\`);
+    }
+  }
+  let out='';for(const[g,ch]of map)out+=\`\${g},#genre#\\n\${ch.join('\\n')}\\n\\n\`;
+  document.getElementById('m3uOut').value=out.trim();
+}
+
+const toS=OpenCC.Converter({from:'tw',to:'cn'});
+const toT=OpenCC.Converter({from:'cn',to:'tw'});
+function toSimp(){document.getElementById('cnOut').value=toS(document.getElementById('cnIn').value);}
+function toTrad(){document.getElementById('cnOut').value=toT(document.getElementById('cnIn').value);}
+
+async function decrypt(){
+  const url=document.getElementById('urlIn').value.trim();
+  const out=document.getElementById('decOut');
+  if(!url){out.value='请输入 URL';return;}
+  out.value='正在请求…';
+  const proxies=['https://api.allorigins.win/raw?url=','https://bird.ioliu.cn/v1?url=','https://proxy.zme.ink/raw?url='];
+  for(const p of proxies){
+    try{const r=await fetch(p+encodeURIComponent(url));if(r.ok){out.value=await r.text();return;}}catch{}
+  }
+  out.value='所有代理均无法访问，请检查 URL 后重试。';
+}
+</script>
+</body>
+</html>
+
+`;
+    return new Response(html, {
+      headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+    });
+  }
+};
