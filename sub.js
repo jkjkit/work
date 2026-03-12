@@ -631,7 +631,7 @@ function mergeTemplate(template, subLines) {
       break;
     }
   }
-  return [...head, ...String(subLines || "").split("\n").filter(Boolean), ...rest.slice(cut)].join("\n");
+  return [...head, ...String(subLines || "").split("\n").filter(Boolean), "", ...rest.slice(cut)].join("\n");
 }
 async function apiSub(url, env) {
   if (!env?.SUB_KV)
@@ -773,7 +773,10 @@ textarea{resize:none;min-height:90px;font-family:ui-monospace,Menlo,monospace;fo
     </div>
   </div>
   <div class="panel" id="panel-1">
-    <div class="panel-header">节点列表</div>
+    <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span>节点列表</span>
+      <button id="clearNodes" class="fmt-btn" style="color:#c0392b;border-color:#e8c8c8">清除</button>
+    </div>
     <div class="panel-body"><div id="mid"></div></div>
   </div>
   <div class="panel" id="panel-2">
@@ -867,5 +870,7 @@ async function addTop(){const text=el.add.value.trim();if(!text)return setStatus
 async function gen(){const vis=visible();if(!vis.length)return setStatus("没有可生成的可见节点。");el.gen.disabled=true;setStatus("生成短链中...");try{const d=await reqJson("/api/gen",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({nodes:vis})});const u=new URL(location.href);u.pathname="/sub/"+d.token+".yaml";u.search=u.hash="";el.subLink.value=u.toString();setStatus("已生成新的短链：/sub/"+d.token+".yaml");}catch(e){setStatus(e.message||"生成异常");}finally{el.gen.disabled=false;}}
 async function cpy(){const u=el.subLink.value.trim();if(!u)return setStatus("请先生成订阅链接。");try{await navigator.clipboard.writeText(u);setStatus("已复制订阅链接。");}catch{el.subLink.focus();el.subLink.select();setStatus("复制失败，请手动复制。");}}
 function open(){const u=el.subLink.value.trim();if(!u)return setStatus("请先生成订阅链接。");window.open(u,"_blank","noopener,noreferrer");}
-el.rep.onclick=()=>load("replace");el.app.onclick=()=>load("append");el.top.onclick=addTop;el.gen.onclick=gen;el.cpy.onclick=cpy;el.open.onclick=open;el.sub.addEventListener("keydown",e=>{if(e.key==="Enter")load("replace")});el.add.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter")addTop()});renderM();renderR();})();</script></body></html>`;
+el.rep.onclick=()=>load("replace");el.app.onclick=()=>load("append");el.top.onclick=addTop;el.gen.onclick=gen;el.cpy.onclick=cpy;el.open.onclick=open;
+document.getElementById("clearNodes").onclick=()=>{nodes=[];renderM();renderR();setStatus("已清除所有节点。");};
+el.sub.addEventListener("keydown",e=>{if(e.key==="Enter")load("replace")});el.add.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key==="Enter")addTop()});renderM();renderR();})();</script></body></html>`;
 }
