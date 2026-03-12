@@ -159,6 +159,8 @@ function parseVless(link) {
   const u = new URL(link),
     sec = (u.searchParams.get("security") || "").toLowerCase(),
     host = u.searchParams.get("host") || "";
+  const rawQuery = {};
+  u.searchParams.forEach((v, k) => { rawQuery[k] = v; });
   return compact({
     name: decodeURIComponent((u.hash || "").slice(1)),
     type: "vless",
@@ -173,11 +175,15 @@ function parseVless(link) {
     realityShortId: u.searchParams.get("sid") || "",
     wsPath: u.searchParams.get("path") || "",
     wsHeaders: host ? `Host:${host}` : "",
+    __rawQuery: rawQuery,
+    __rawScheme: "vless",
   });
 }
 function parseTrojan(link) {
   const u = new URL(link),
     host = u.searchParams.get("host") || "";
+  const rawQuery = {};
+  u.searchParams.forEach((v, k) => { rawQuery[k] = v; });
   return compact({
     name: decodeURIComponent((u.hash || "").slice(1)),
     type: "trojan",
@@ -189,6 +195,8 @@ function parseTrojan(link) {
     skipCertVerify: /^(1|true|yes)$/i.test(u.searchParams.get("allowInsecure") || ""),
     wsPath: u.searchParams.get("path") || "",
     wsHeaders: host ? `Host:${host}` : "",
+    __rawQuery: rawQuery,
+    __rawScheme: "trojan",
   });
 }
 function parseSS(link) {
@@ -223,6 +231,8 @@ function parseSS(link) {
 }
 function parseHY2(link) {
   const u = new URL(link);
+  const rawQuery = {};
+  u.searchParams.forEach((v, k) => { rawQuery[k] = v; });
   return compact({
     name: decodeURIComponent((u.hash || "").slice(1)),
     type: "hysteria2",
@@ -232,6 +242,8 @@ function parseHY2(link) {
     sni: u.searchParams.get("sni") || "",
     skipCertVerify: /^(1|true|yes)$/i.test(u.searchParams.get("insecure") || ""),
     alpn: u.searchParams.get("alpn") || "",
+    __rawQuery: rawQuery,
+    __rawScheme: "hysteria2",
   });
 }
 function parseLink(x) {
@@ -438,6 +450,11 @@ function normalizeNode(n0) {
 
   // URI / Base64 来源节点：需要将中间格式字段转换为 Clash 规范字段
   delete n.__src;
+  // 保留原始 query 参数供 toUri 还原，不参与 YAML 输出
+  const rawQuery = n.__rawQuery;
+  const rawScheme = n.__rawScheme;
+  delete n.__rawQuery;
+  delete n.__rawScheme;
   if (n.skipCertVerify !== undefined) {
     n["skip-cert-verify"] = !!n.skipCertVerify;
     delete n.skipCertVerify;
@@ -460,7 +477,10 @@ function normalizeNode(n0) {
   // servername → sni（Clash 统一用 servername，trojan/hy2 原本就是 sni，统一一下）
   if (n.sni && !n.servername) { n.servername = n.sni; delete n.sni; }
 
-  return compact(n);
+  const result = compact(n);
+  if (rawQuery && Object.keys(rawQuery).length) result.__rawQuery = rawQuery;
+  if (rawScheme) result.__rawScheme = rawScheme;
+  return result;
 }
 function buildInlineYaml(nodes) {
   const nameCount = {};
@@ -812,7 +832,7 @@ document.querySelectorAll('.tab').forEach(tab=>{
   };
 });
 </script>
-<script>(()=>{const $=id=>document.getElementById(id),el={sub:$("subUrl"),rep:$("fetchReplace"),app:$("fetchAppend"),add:$("addText"),top:$("addTop"),st:$("status"),mid:$("mid"),out:$("out"),gen:$("genSub"),cpy:$("copySub"),open:$("openSub"),subLink:$("subLink")};const typeMeta={vmess:["t-vmess","Vmess"],vless:["t-vless","Vless"],trojan:["t-trojan","Trojan"],ss:["t-ss","Ss"],hysteria2:["t-hysteria2","Hysteria2"],other:["t-other","Other"]};let nodes=[];const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),setStatus=s=>el.st.textContent=s,typeKey=x=>String(x||"other").toLowerCase(),visible=()=>nodes.filter(n=>!n.__hidden);function fmtVal(v){if(v===null||v===undefined)return "";if(typeof v==="boolean")return v?"true":"false";if(typeof v==="number")return String(v);if(Array.isArray(v))return "["+v.map(fmtVal).join(", ")+"]";if(typeof v==="object"){const kv=Object.entries(v).filter(([,x])=>x!==""&&x!==null&&x!==undefined).map(([k,x])=>k+": "+fmtVal(x));return "{ "+kv.join(", ")+" }";}const s=String(v);if(/[:{},#&*?|<>=!%@\x60]/.test(s)||s.includes("[")||s.includes("]")||s.includes("'"))return '"'+s.replace(/"/g,'\\"')+'"';return s;}const PRIO=["name","type","server","port","uuid","password","cipher","alterId","flow","network","tls","servername","sni","plugin","plugin-opts","ws-opts","reality-opts","skip-cert-verify","alpn"];function one(n){const seen=new Set(["__hidden","__src"]);const a=[];for(const k of PRIO){if(!(k in n))continue;const v=n[k];seen.add(k);if(v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}for(const [k,v] of Object.entries(n)){if(seen.has(k)||v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}return a.length?"{ "+a.join(", ")+" }":"";}
+<script>(()=>{const $=id=>document.getElementById(id),el={sub:$("subUrl"),rep:$("fetchReplace"),app:$("fetchAppend"),add:$("addText"),top:$("addTop"),st:$("status"),mid:$("mid"),out:$("out"),gen:$("genSub"),cpy:$("copySub"),open:$("openSub"),subLink:$("subLink")};const typeMeta={vmess:["t-vmess","Vmess"],vless:["t-vless","Vless"],trojan:["t-trojan","Trojan"],ss:["t-ss","Ss"],hysteria2:["t-hysteria2","Hysteria2"],other:["t-other","Other"]};let nodes=[];const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),setStatus=s=>el.st.textContent=s,typeKey=x=>String(x||"other").toLowerCase(),visible=()=>nodes.filter(n=>!n.__hidden);function fmtVal(v){if(v===null||v===undefined)return "";if(typeof v==="boolean")return v?"true":"false";if(typeof v==="number")return String(v);if(Array.isArray(v))return "["+v.map(fmtVal).join(", ")+"]";if(typeof v==="object"){const kv=Object.entries(v).filter(([,x])=>x!==""&&x!==null&&x!==undefined).map(([k,x])=>k+": "+fmtVal(x));return "{ "+kv.join(", ")+" }";}const s=String(v);if(/[:{},#&*?|<>=!%@\x60]/.test(s)||s.includes("[")||s.includes("]")||s.includes("'"))return '"'+s.replace(/"/g,'\\"')+'"';return s;}const PRIO=["name","type","server","port","uuid","password","cipher","alterId","flow","network","tls","servername","sni","plugin","plugin-opts","ws-opts","reality-opts","skip-cert-verify","alpn"];function one(n){const seen=new Set(["__hidden","__src","__rawQuery","__rawScheme"]);const a=[];for(const k of PRIO){if(!(k in n))continue;const v=n[k];seen.add(k);if(v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}for(const [k,v] of Object.entries(n)){if(seen.has(k)||v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}return a.length?"{ "+a.join(", ")+" }":"";}
 /* ---- URI/Base64 export ---- */
 function getWsOpts(n){const wo=n["ws-opts"]||{};return{path:n.wsPath||wo.path||"",host:(wo.headers&&wo.headers.Host)||n.wsHeaders?.replace(/^Host:/i,"").trim()||""};}
 function getRealityOpts(n){const ro=n["reality-opts"]||{};return{pbk:n.realityPubKey||ro["public-key"]||"",sid:n.realityShortId||ro["short-id"]||""};}
@@ -820,6 +840,15 @@ function toUri(n){
   const type=String(n.type||"").toLowerCase();
   const name=encodeURIComponent(n.name||"");
   try{
+    // 若有原始 query 参数，直接用原始参数重建（只替换 name，保留所有原始字段）
+    if(n.__rawQuery&&n.__rawScheme){
+      const rq=n.__rawQuery;
+      const scheme=n.__rawScheme;
+      const qs=Object.entries(rq).map(([k,v])=>encodeURIComponent(k)+"="+encodeURIComponent(v)).join("&");
+      if(scheme==="vless")return "vless://"+encodeURIComponent(n.uuid||n.password||"")+"@"+n.server+":"+n.port+(qs?"?"+qs:"")+"#"+name;
+      if(scheme==="trojan")return "trojan://"+encodeURIComponent(n.password||"")+"@"+n.server+":"+n.port+(qs?"?"+qs:"")+"#"+name;
+      if(scheme==="hysteria2")return "hysteria2://"+encodeURIComponent(n.password||"")+"@"+n.server+":"+n.port+(qs?"?"+qs:"")+"#"+name;
+    }
     if(type==="vmess"){
       const{path,host}=getWsOpts(n);
       const obj={v:"2",ps:n.name||"",add:n.server||"",port:n.port||0,id:n.uuid||"",aid:n.alterId||0,scy:n.cipher||"auto",net:n.network||"tcp",tls:n.tls?"tls":"",sni:n.servername||n.sni||"",path:path,host:host};
