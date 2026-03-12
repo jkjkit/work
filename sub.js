@@ -252,54 +252,129 @@ function byLine(text) {
     .filter(Boolean)
     .map(parseLink)
     .filter(Boolean)
-    .map(compact);
+    .map((n) => compact({ ...n, __src: "uri" }));
 }
+// 递归解析一个 YAML 块（对象或列表），完整保留所有嵌套字段
+function parseYamlBlock(lines, start, minIndent) {
+  // 找到第一个有效行，确定本块缩进基准
+  let baseIndent = -1;
+  let i = start;
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (t) { baseIndent = lines[i].length - lines[i].trimStart().length; break; }
+    i++;
+  }
+  if (baseIndent < minIndent) return { value: null, nextIndex: i };
+
+  const firstT = lines[i].trim();
+
+  if (firstT.startsWith("- ") || firstT === "-") {
+    // 解析列表
+    const arr = [];
+    while (i < lines.length) {
+      const l = lines[i], t = l.trim();
+      if (!t) { i++; continue; }
+      const ind = l.length - l.trimStart().length;
+      if (ind < baseIndent) break;
+      if (ind === baseIndent && (t.startsWith("- ") || t === "-")) {
+        const rest = t.replace(/^-\s*/, "").trim();
+        // inline object: - { key: val, ... }
+        if (rest.startsWith("{")) {
+          const o = parseInlineObj(rest);
+          arr.push(o ?? rest);
+          i++;
+          continue;
+        }
+        // 读取 list-item 内的映射字段（block mapping）
+        const obj = {};
+        const kv0 = rest ? splitKV(rest) : null;
+        if (kv0) {
+          // 有可能值是空的（下方有子块）
+          const afterColon = rest.slice(rest.indexOf(":") + 1).trim();
+          if (afterColon === "" || afterColon === "|" || afterColon === ">") {
+            const sub = parseYamlBlock(lines, i + 1, ind + 1);
+            obj[kv0.key] = sub.value;
+            i = sub.nextIndex;
+          } else {
+            obj[kv0.key] = kv0.value;
+            i++;
+          }
+        } else if (rest) {
+          // 纯标量列表元素
+          arr.push(pScalar(rest));
+          i++;
+          continue;
+        } else {
+          i++;
+        }
+        // 读取同一 list-item 下更深缩进的字段
+        while (i < lines.length) {
+          const l2 = lines[i], t2 = l2.trim();
+          if (!t2) { i++; continue; }
+          const ind2 = l2.length - l2.trimStart().length;
+          if (ind2 <= ind) break;
+          const kv2 = splitKV(t2);
+          if (kv2) {
+            const afterColon2 = t2.slice(t2.indexOf(":") + 1).trim();
+            if (afterColon2 === "" || afterColon2 === "|" || afterColon2 === ">") {
+              const sub = parseYamlBlock(lines, i + 1, ind2 + 1);
+              obj[kv2.key] = sub.value;
+              i = sub.nextIndex;
+            } else {
+              obj[kv2.key] = kv2.value;
+              i++;
+            }
+          } else {
+            i++;
+          }
+        }
+        arr.push(Object.keys(obj).length ? compact(obj) : null);
+        continue;
+      }
+      i++;
+    }
+    return { value: arr.filter(x => x !== null), nextIndex: i };
+  } else {
+    // 解析对象映射
+    const obj = {};
+    while (i < lines.length) {
+      const l = lines[i], t = l.trim();
+      if (!t) { i++; continue; }
+      const ind = l.length - l.trimStart().length;
+      if (ind < baseIndent) break;
+      const kv = splitKV(t);
+      if (kv) {
+        const afterColon = t.slice(t.indexOf(":") + 1).trim();
+        if (afterColon === "" || afterColon === "|" || afterColon === ">") {
+          const sub = parseYamlBlock(lines, i + 1, ind + 1);
+          obj[kv.key] = sub.value;
+          i = sub.nextIndex;
+        } else {
+          obj[kv.key] = kv.value;
+          i++;
+        }
+      } else {
+        i++;
+      }
+    }
+    return { value: compact(obj), nextIndex: i };
+  }
+}
+
 function yamlNodes(text) {
   const lines = String(text || "").replace(/\r/g, "").split("\n");
   const out = [];
-  let inP = false,
-    pIndent = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i],
-      t = l.trim(),
-      ind = l.length - l.trimStart().length;
-    if (!inP) {
-      if (/^proxies\s*:\s*$/.test(t)) {
-        inP = true;
-        pIndent = ind;
-      }
-      continue;
-    }
-    if (!t) continue;
-    if (ind <= pIndent && /^[A-Za-z0-9_-]+\s*:/.test(t)) break;
-    const inl = t.match(/^-+\s*(\{.*\})\s*$/);
-    if (inl) {
-      const o = parseInlineObj(inl[1]);
-      if (o?.type) out.push(o);
-      continue;
-    }
-    if (!/^-+\s*/.test(t)) continue;
-    const node = {};
-    const first = t.replace(/^-\s+/, ""),
-      kv1 = first ? splitKV(first) : null;
-    if (kv1) node[kv1.key] = kv1.value;
-    const base = ind;
-    let j = i + 1;
-    while (j < lines.length) {
-      const l2 = lines[j],
-        t2 = l2.trim(),
-        ind2 = l2.length - l2.trimStart().length;
-      if (!t2) {
-        j++;
-        continue;
-      }
-      if (ind2 <= base) break;
-      const kv = splitKV(t2);
-      if (kv) node[kv.key] = kv.value;
-      j++;
-    }
-    if (node.type) out.push(compact(node));
-    i = j - 1;
+  let i = 0;
+  // 找到 proxies: 行（支持有无尾随空格）
+  while (i < lines.length) {
+    if (/^proxies\s*:\s*$/.test(lines[i].trim())) { i++; break; }
+    i++;
+  }
+  if (i >= lines.length) return out;
+  const result = parseYamlBlock(lines, i, 0);
+  if (!Array.isArray(result.value)) return out;
+  for (const node of result.value) {
+    if (node && typeof node === "object" && node.type) out.push({ ...node, __src: "yaml" });
   }
   return out;
 }
@@ -346,9 +421,23 @@ function hostFromWsHeaders(s) {
   return m ? m[1].trim() : "";
 }
 function normalizeNode(n0) {
-  const n = compact({ ...(n0 || {}) });
+  const n = { ...(n0 || {}) };
   delete n.__hidden;
 
+  // YAML 来源节点：字段已是 Clash 规范（如 ws-opts、skip-cert-verify），
+  // 只做最小修复，不转换原始结构
+  if (n.__src === "yaml") {
+    delete n.__src;
+    // 确保 tls 是布尔值（有时 YAML 解析为字符串）
+    if (n.tls !== undefined && typeof n.tls !== "boolean") n.tls = toBool(n.tls);
+    // alpn 若为逗号字符串则转数组
+    if (typeof n.alpn === "string" && n.alpn.includes(","))
+      n.alpn = n.alpn.split(",").map((x) => x.trim()).filter(Boolean);
+    return compact(n);
+  }
+
+  // URI / Base64 来源节点：需要将中间格式字段转换为 Clash 规范字段
+  delete n.__src;
   if (n.skipCertVerify !== undefined) {
     n["skip-cert-verify"] = !!n.skipCertVerify;
     delete n.skipCertVerify;
@@ -359,8 +448,17 @@ function normalizeNode(n0) {
     delete n.wsPath;
     delete n.wsHeaders;
   }
-  if (typeof n.alpn === "string" && n.alpn.includes(",")) n.alpn = n.alpn.split(",").map((x) => x.trim()).filter(Boolean);
+  // realityPubKey / realityShortId → reality-opts
+  if (n.realityPubKey || n.realityShortId) {
+    n["reality-opts"] = compact({ "public-key": n.realityPubKey || "", "short-id": n.realityShortId || "" });
+    delete n.realityPubKey;
+    delete n.realityShortId;
+  }
+  if (typeof n.alpn === "string" && n.alpn.includes(","))
+    n.alpn = n.alpn.split(",").map((x) => x.trim()).filter(Boolean);
   if (n.tls !== undefined && n.tls !== "") n.tls = toBool(n.tls) || n.tls === true;
+  // servername → sni（Clash 统一用 servername，trojan/hy2 原本就是 sni，统一一下）
+  if (n.sni && !n.servername) { n.servername = n.sni; delete n.sni; }
 
   return compact(n);
 }
@@ -629,6 +727,9 @@ textarea{resize:none;min-height:90px;font-family:ui-monospace,Menlo,monospace;fo
 .name:focus{background:#fff;border-color:var(--border);outline:none}
 .mini{padding:4px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;color:var(--text2);font-size:11px;font-family:inherit;cursor:pointer;transition:background .15s;white-space:nowrap}
 .mini:hover{background:var(--surface)}
+.fmt-btn{padding:3px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;color:var(--text2);font-size:10px;font-weight:600;font-family:ui-monospace,Menlo,monospace;cursor:pointer;transition:background .15s,color .15s,border-color .15s;white-space:nowrap;letter-spacing:.03em}
+.fmt-btn:hover{background:var(--surface);border-color:var(--border2)}
+.fmt-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 #out{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.7;color:var(--text2);white-space:pre-wrap;word-break:break-all}
 /* ---- Mobile ---- */
 @media(max-width:768px){
@@ -676,7 +777,14 @@ textarea{resize:none;min-height:90px;font-family:ui-monospace,Menlo,monospace;fo
     <div class="panel-body"><div id="mid"></div></div>
   </div>
   <div class="panel" id="panel-2">
-    <div class="panel-header">节点数据</div>
+    <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span>节点数据</span>
+      <div id="fmtBar" style="display:flex;gap:4px">
+        <button class="fmt-btn active" data-fmt="yaml-inline">YAML</button>
+        <button class="fmt-btn" data-fmt="uri">URI</button>
+        <button class="fmt-btn" data-fmt="base64">Base64</button>
+      </div>
+    </div>
     <div class="panel-body"><pre id="out"></pre></div>
   </div>
 </div>
@@ -701,9 +809,57 @@ document.querySelectorAll('.tab').forEach(tab=>{
   };
 });
 </script>
-<script>(()=>{const $=id=>document.getElementById(id),el={sub:$("subUrl"),rep:$("fetchReplace"),app:$("fetchAppend"),add:$("addText"),top:$("addTop"),st:$("status"),mid:$("mid"),out:$("out"),gen:$("genSub"),cpy:$("copySub"),open:$("openSub"),subLink:$("subLink")};const typeMeta={vmess:["t-vmess","Vmess"],vless:["t-vless","Vless"],trojan:["t-trojan","Trojan"],ss:["t-ss","Ss"],hysteria2:["t-hysteria2","Hysteria2"],other:["t-other","Other"]};let nodes=[];const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),setStatus=s=>el.st.textContent=s,typeKey=x=>String(x||"other").toLowerCase(),visible=()=>nodes.filter(n=>!n.__hidden),fmt=v=>v===null||v===undefined?"":String(v).replace(/\\r?\\n/g," ").trim();
-function one(n){const ks=["name","type","server","port","uuid","password","cipher","alterId","flow","network","tls","servername","sni","realityPubKey","realityShortId","skipCertVerify","alpn","wsPath","wsHeaders","plugin"];const a=[];for(const k of ks){const v=n[k];if(k==="__hidden"||v===""||v===null||v===undefined)continue;a.push([k,v]);}for(const [k,v] of Object.entries(n)){if(k==="__hidden"||ks.includes(k)||v===""||v===null||v===undefined)continue;a.push([k,v]);}return a.length?("{ "+a.map(([k,v])=>k+": "+fmt(v)).join(", ")+" }"):"";}
-function renderR(){el.out.textContent=visible().map(one).filter(Boolean).join("\\n");}
+<script>(()=>{const $=id=>document.getElementById(id),el={sub:$("subUrl"),rep:$("fetchReplace"),app:$("fetchAppend"),add:$("addText"),top:$("addTop"),st:$("status"),mid:$("mid"),out:$("out"),gen:$("genSub"),cpy:$("copySub"),open:$("openSub"),subLink:$("subLink")};const typeMeta={vmess:["t-vmess","Vmess"],vless:["t-vless","Vless"],trojan:["t-trojan","Trojan"],ss:["t-ss","Ss"],hysteria2:["t-hysteria2","Hysteria2"],other:["t-other","Other"]};let nodes=[];const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"),setStatus=s=>el.st.textContent=s,typeKey=x=>String(x||"other").toLowerCase(),visible=()=>nodes.filter(n=>!n.__hidden);function fmtVal(v){if(v===null||v===undefined)return "";if(typeof v==="boolean")return v?"true":"false";if(typeof v==="number")return String(v);if(Array.isArray(v))return "["+v.map(fmtVal).join(", ")+"]";if(typeof v==="object"){const kv=Object.entries(v).filter(([,x])=>x!==""&&x!==null&&x!==undefined).map(([k,x])=>k+": "+fmtVal(x));return "{ "+kv.join(", ")+" }";}const s=String(v);if(/[:{},#&*?|<>=!%@\x60]/.test(s)||s.includes("[")||s.includes("]")||s.includes("'"))return '"'+s.replace(/"/g,'\\"')+'"';return s;}const PRIO=["name","type","server","port","uuid","password","cipher","alterId","flow","network","tls","servername","sni","plugin","plugin-opts","ws-opts","reality-opts","skip-cert-verify","alpn"];function one(n){const seen=new Set(["__hidden","__src"]);const a=[];for(const k of PRIO){if(!(k in n))continue;const v=n[k];seen.add(k);if(v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}for(const [k,v] of Object.entries(n)){if(seen.has(k)||v===""||v===null||v===undefined)continue;a.push(k+": "+fmtVal(v));}return a.length?"{ "+a.join(", ")+" }":"";}
+/* ---- URI/Base64 export ---- */
+function getWsOpts(n){const wo=n["ws-opts"]||{};return{path:n.wsPath||wo.path||"",host:(wo.headers&&wo.headers.Host)||n.wsHeaders?.replace(/^Host:/i,"").trim()||""};}
+function getRealityOpts(n){const ro=n["reality-opts"]||{};return{pbk:n.realityPubKey||ro["public-key"]||"",sid:n.realityShortId||ro["short-id"]||""};}
+function toUri(n){
+  const type=String(n.type||"").toLowerCase();
+  const name=encodeURIComponent(n.name||"");
+  try{
+    if(type==="vmess"){
+      const{path,host}=getWsOpts(n);
+      const obj={v:"2",ps:n.name||"",add:n.server||"",port:n.port||0,id:n.uuid||"",aid:n.alterId||0,scy:n.cipher||"auto",net:n.network||"tcp",tls:n.tls?"tls":"",sni:n.servername||n.sni||"",path:path,host:host};
+      return "vmess://"+btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+    }
+    if(type==="vless"){
+      const{path,host}=getWsOpts(n);const{pbk,sid}=getRealityOpts(n);
+      const sec=n.tls?(pbk?"reality":"tls"):"none";
+      const p=new URLSearchParams();
+      if(n.flow)p.set("flow",n.flow);if(n.network)p.set("type",n.network);p.set("security",sec);if(n.servername||n.sni)p.set("sni",n.servername||n.sni);if(path)p.set("path",path);if(host)p.set("host",host);if(pbk)p.set("pbk",pbk);if(sid)p.set("sid",sid);
+      return "vless://"+encodeURIComponent(n.uuid||"")+"@"+n.server+":"+n.port+"?"+p.toString()+"#"+name;
+    }
+    if(type==="trojan"){
+      const{path,host}=getWsOpts(n);
+      const p=new URLSearchParams();
+      if(n.network)p.set("type",n.network);if(n.sni||n.servername)p.set("sni",n.sni||n.servername);if(path)p.set("path",path);if(host)p.set("host",host);if(n["skip-cert-verify"]||n.skipCertVerify)p.set("allowInsecure","1");
+      return "trojan://"+encodeURIComponent(n.password||"")+"@"+n.server+":"+n.port+(p.toString()?"?"+p.toString():"")+"#"+name;
+    }
+    if(type==="ss"){
+      const userinfo=btoa(unescape(encodeURIComponent((n.cipher||"")+":"+(n.password||""))));
+      let uri="ss://"+userinfo+"@"+n.server+":"+n.port;
+      if(n.plugin){const p=new URLSearchParams();p.set("plugin",n.plugin+(n["plugin-opts"]?";mode="+(n["plugin-opts"].mode||""):""));uri+="?"+p.toString();}
+      return uri+"#"+name;
+    }
+    if(type==="hysteria2"){
+      const p=new URLSearchParams();
+      if(n.sni||n.servername)p.set("sni",n.sni||n.servername);if(n["skip-cert-verify"]||n.skipCertVerify)p.set("insecure","1");if(n.alpn)p.set("alpn",Array.isArray(n.alpn)?n.alpn.join(","):n.alpn);
+      return "hysteria2://"+encodeURIComponent(n.password||"")+"@"+n.server+":"+n.port+(p.toString()?"?"+p.toString():"")+"#"+name;
+    }
+  }catch{}
+  return null;
+}
+function toB64(n){const u=toUri(n);return u?btoa(unescape(encodeURIComponent(u))):null;}
+let outFmt="yaml-inline";
+function renderR(){
+  const vis=visible();
+  let lines;
+  if(outFmt==="uri")lines=vis.map(toUri).filter(Boolean);
+  else if(outFmt==="base64")lines=vis.map(toB64).filter(Boolean);
+  else lines=vis.map(one).filter(Boolean);
+  el.out.textContent=lines.join("\\n");
+}
+document.getElementById("fmtBar").querySelectorAll(".fmt-btn").forEach(btn=>{btn.onclick=()=>{outFmt=btn.dataset.fmt;document.getElementById("fmtBar").querySelectorAll(".fmt-btn").forEach(b=>b.classList.toggle("active",b===btn));renderR();};});
 function renderM(){el.mid.innerHTML=nodes.map((n,i)=>{const [c,t]=typeMeta[typeKey(n.type)]||typeMeta.other,cls=n.__hidden?"node hidden":"node",dis=n.__hidden?"disabled":"",txt=n.__hidden?"显示":"隐藏";return '<div class="'+cls+'"><span class="tag '+c+'">'+esc(t)+'</span><input class="name" data-i="'+i+'" value="'+esc(n.name||"")+'" '+dis+' /><button class="mini" data-h="'+i+'">'+txt+"</button></div>";}).join("");el.mid.querySelectorAll(".name").forEach(inp=>inp.oninput=e=>{const i=+e.target.dataset.i;if(!nodes[i])return;nodes[i].name=e.target.value;renderR();});el.mid.querySelectorAll(".mini").forEach(btn=>btn.onclick=e=>{const i=+e.target.dataset.h;if(!nodes[i])return;nodes[i].__hidden=!nodes[i].__hidden;renderM();renderR();setStatus("当前显示 "+visible().length+" / "+nodes.length+" 条");});}
 async function reqJson(path,opt){const r=await fetch(path,opt),d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)throw new Error(d.error||("请求失败，HTTP "+r.status));return d;}
 async function load(mode){const subUrl=el.sub.value.trim();if(!subUrl)return setStatus("请先输入订阅链接。");el.rep.disabled=el.app.disabled=true;setStatus("请求中...");try{const d=await reqJson("/api/fetch?url="+encodeURIComponent(subUrl));const list=(Array.isArray(d.nodes)?d.nodes:[]).map(n=>({...n,__hidden:false}));nodes=mode==="append"?[...nodes,...list]:list;renderM();renderR();setStatus((mode==="append"?"已追加，":"已覆盖，")+"上游HTTP "+d.status+"；来源 "+(d.mode||"unknown")+"；本次 "+list.length+" 条，总计 "+nodes.length+" 条");}catch(e){setStatus(e.message||"请求异常");}finally{el.rep.disabled=el.app.disabled=false;}}
