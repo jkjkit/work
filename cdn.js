@@ -1,245 +1,469 @@
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
+// ============================================================
+//  Cloudflare Worker — 链接转换工具 v5
+//  直接粘贴到 CF Workers 部署即可
+//
+//  路径规则（直接访问，无需前端）：
+//  /{github_url}            → jsDelivr CDN 转换后跳转
+//  /1/{github_url}          → gh-proxy.com 代理跳转
+//  /2/{github_url}          → gh.llkk.cc 代理跳转
+//  /3/{github_url}          → gh-proxy.org 代理跳转
+//  /4/{sub_url}             → 订阅注入模板 A 返回 YAML
+//  /5/{sub_url}             → 订阅注入模板 B 返回 YAML
+//  /6/{sub_url}             → 订阅注入模板 C 返回 YAML
+// ============================================================
 
-    // 短链路由: /0/ ~ /6/ + 目标地址
-    const shortMatch = url.pathname.match(/^\/([0-6])\/(.+)$/);
-    if (shortMatch) {
-      const idx = parseInt(shortMatch[1]);
-      const target = decodeURIComponent(shortMatch[2]);
-      const full = target.startsWith('http') ? target : 'https://' + target;
-      // 0: CDN
-      if (idx === 0) {
-        const m = full.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^export default {
-  async fetch(request) {
-    const url = new URL(request.url);
+const GH_PROXIES = [
+  'https://gh-proxy.com/',   // /1/
+  'https://gh.llkk.cc/',     // /2/
+  'https://gh-proxy.org/',   // /3/
+];
 
-    // 短链路由: /0/ ~ /6/ + 目标地址
-    const fullPath = url.pathname + url.search;
-    const shortMatch = fullPath.match(/^\/([0-6])\/(.+)$/);
-    if (shortMatch) {
-      const idx = parseInt(shortMatch[1]);
-      const target = shortMatch[2];
-      const full = target.startsWith('http') ? target : 'https://' + target;
-      // 0: CDN
-      if (idx === 0) {
-        const m = full.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)/);
-        if (!m) return new Response('格式错误', { status: 400 });
-        return Response.redirect(CDN_PREFIX + m[1] + '/' + m[2] + '@' + m[3] + '/' + m[4], 302);
-      }
-      // 1-3: GH Proxy
-      if (idx >= 1 && idx <= 3) {
-        const proxies = [GH_PROXY_1, GH_PROXY_2, GH_PROXY_3];
-        const p = proxies[idx - 1];
-        return Response.redirect(p.endsWith('/') ? p + full : p + '/' + full, 302);
-      }
-      // 4-6: 订阅转换
-      const convertUrl = new URL('/convert', url.origin);
-      convertUrl.searchParams.set('sub', full);
-      convertUrl.searchParams.set('tpl', String(idx - 4));
-      return Response.redirect(convertUrl.toString(), 302);
-    }
-
-    if (url.pathname === '/convert') {
-      try {
-        let subUrl, tplIndex;
-        if (request.method === 'POST') {
-          const body = await request.json();
-          subUrl = body.subUrl; tplIndex = body.tplIndex;
-        } else {
-          subUrl = url.searchParams.get('sub');
-          tplIndex = parseInt(url.searchParams.get('tpl') || '0');
-        }
-        if (!subUrl) return new Response(JSON.stringify({ error: '缺少订阅链接' }), { status: 400 });
-        const tpls = [SUB_TPL_1, SUB_TPL_2, SUB_TPL_3];
-        const tplUrl = tpls[tplIndex];
-        if (!tplUrl) return new Response(JSON.stringify({ error: '模板未配置' }), { status: 400 });
-        const r = await fetch(tplUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } });
-        if (!r.ok) return new Response(JSON.stringify({ error: '拉取模板失败: ' + r.status }), { status: 502 });
-        const yaml = await r.text();
-        const result = yaml.replace(/url:\s*['"]订阅链接['"]/g, "url: '" + subUrl + "'")
-        .replace(/,?\s*(strategy|uselightgbm|collectdata|sample-rate|prefer-asn):\s*[^,}]+/g, '')
-        .replace(/type:\s*smart/g, 'type: url-test')
-        return new Response(result, { headers: { 'Content-Type': 'text/yaml; charset=utf-8', 'Cache-Control': 'no-store' } });
-      } catch(e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
-      }
-    }
-    return new Response(HTML, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
-  },
+const TEMPLATES = {
+  4: 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/a.yml',
+  5: 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/b.yml',
+  6: 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/c.yml',
 };
 
-// ====== 配置区 ======
-const CDN_PREFIX = 'https://cdn.jsdelivr.net/gh/';
+// ── jsDelivr 转换 ──────────────────────────────────────────
+function toJsdelivr(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname === 'raw.githubusercontent.com') {
+      const [, user, repo, branch, ...rest] = u.pathname.split('/');
+      return `https://cdn.jsdelivr.net/gh/${user}/${repo}@${branch}/${rest.join('/')}`;
+    }
+    if (u.hostname === 'github.com') {
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (parts.length < 4) throw new Error('链接格式不正确，需包含文件路径');
+      const [user, repo, , branch, ...rest] = parts;
+      return `https://cdn.jsdelivr.net/gh/${user}/${repo}@${branch}/${rest.join('/')}`;
+    }
+    throw new Error('非 GitHub 链接');
+  } catch (e) {
+    throw new Error(e.message || '链接解析失败');
+  }
+}
 
-const GH_PROXY_1 = 'https://gh-proxy.com/';
-const GH_PROXY_2 = 'https://gh.llkk.cc/';
-const GH_PROXY_3 = 'https://gh-proxy.org/';
+// ── 订阅注入 ──────────────────────────────────────────────
+async function buildSub(tmplUrl, subUrl) {
+  const resp = await fetch(tmplUrl, { cf: { cacheTtl: 300 } });
+  if (!resp.ok) throw new Error(`模板获取失败: ${resp.status}`);
+  const text = await resp.text();
+  return text
+    .replace(/"订阅链接"/g, `"${subUrl}"`)
+    .replace(/订阅链接/g, subUrl);
+}
 
-const SUB_TPL_1 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/a.yml';
-const SUB_TPL_2 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/b.yml';
-const SUB_TPL_3 = 'https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/c.yml';
-
+// ── HTML 前端 ─────────────────────────────────────────────
 const HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>链接工具箱</title>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>链接转换工具</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  background:linear-gradient(135deg,#4a5568,#2d3748);
-  display:flex;align-items:center;justify-content:center;
-}
-.box{width:94%;max-width:1000px}
-.title{text-align:center;color:#e2e8f0;font-size:1.1rem;font-weight:600;margin-bottom:20px;letter-spacing:2px}
-.row{
-  display:flex;align-items:center;gap:10px;
-  margin-bottom:10px;
-}
-.row input{
-  flex:1;
-  padding:10px 14px;
-  border:1px solid rgba(255,255,255,.15);
-  border-radius:8px;
-  background:rgba(255,255,255,.08);
-  color:#e2e8f0;
-  font-size:.82rem;
-  outline:none;
-  backdrop-filter:blur(4px);
-}
-.row input::placeholder{color:rgba(255,255,255,.35)}
-.row input:focus{border-color:rgba(255,255,255,.4)}
-.row button{
-  padding:10px 0;width:80px;flex-shrink:0;
-  border:none;border-radius:8px;
-  font-size:.8rem;cursor:pointer;
-  color:#fff;transition:opacity .2s;
-}
-.row button:hover{opacity:.85}
-.btn-cdn{background:#38a169}
-.btn-gh{background:#4a9eff}
-.btn-sub{background:#d69e2e}
-.row a{
-  flex:1;
-  display:block;
-  padding:10px 14px;
-  border:1px solid rgba(255,255,255,.1);
-  border-radius:8px;
-  background:rgba(255,255,255,.05);
-  color:rgba(255,255,255,.3);
-  font-size:.8rem;
-  text-decoration:none;
-  word-break:break-all;
-  line-height:1.3;
-  min-height:38px;
-  backdrop-filter:blur(4px);
-  transition:color .2s,border-color .2s;
-}
-.row a.active{color:#90cdf4;border-color:rgba(144,205,244,.3)}
-.row a.active:hover{color:#bee3f8;text-decoration:underline}
-.sep{height:1px;background:rgba(255,255,255,.08);margin:6px 0}
-@media(max-width:768px){
-  html,body{overflow:auto}
-  .row{flex-wrap:wrap}
-  .row input,.row a{flex:1 1 100%}
-  .row button{width:100%}
-}
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0a0a0f; --surface: #111118; --border: #1e1e2e;
+    --accent: #7c6af7; --accent2: #4fc3f7; --accent3: #a8edaf;
+    --text: #e8e8f0; --muted: #5a5a78; --card: #14141f; --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Syne', sans-serif; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 48px 16px;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 0; opacity: .5;
+  }
+  .glow {
+    position: fixed; width: 600px; height: 600px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,106,247,.12) 0%, transparent 70%);
+    top: -200px; left: 50%; transform: translateX(-50%);
+    pointer-events: none; z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; width: 100%; max-width: 700px; }
+
+  header { text-align: center; margin-bottom: 48px; }
+  .badge {
+    display: inline-block; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 3px; color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 100px;
+    padding: 4px 14px; margin-bottom: 16px; text-transform: uppercase;
+  }
+  header h1 {
+    font-size: clamp(28px,5vw,42px); font-weight: 800; letter-spacing: -1px;
+    background: linear-gradient(135deg,#fff 30%,var(--accent) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  header p { color: var(--muted); margin-top: 10px; font-size: 14px; }
+
+  .tabs {
+    display: flex; gap: 4px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 4px; margin-bottom: 24px;
+  }
+  .tab-btn {
+    flex: 1; padding: 10px 8px; border: none; border-radius: 8px;
+    background: transparent; color: var(--muted);
+    font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .tab-btn.active { background: var(--accent); color: #fff; box-shadow: 0 0 20px rgba(124,106,247,.4); }
+  .tab-btn:hover:not(.active) { color: var(--text); background: var(--border); }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 28px;
+    display: none; flex-direction: column; gap: 20px;
+    animation: fadeUp .3s ease;
+  }
+  .card.active { display: flex; }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+  .card-title {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    letter-spacing: 1px; text-transform: uppercase;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-purple { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .dot-blue   { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+  .dot-green  { background: var(--accent3); box-shadow: 0 0 8px var(--accent3); }
+
+  label { font-size: 13px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 8px; }
+
+  input[type=text] {
+    width: 100%; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; color: var(--text);
+    font-family: 'JetBrains Mono', monospace; font-size: 13px; outline: none;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,106,247,.15); }
+  input::placeholder { color: var(--muted); }
+
+  .seg-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-btn {
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .seg-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .seg-btn.sel-blue  { border-color: var(--accent2); background: rgba(79,195,247,.12); color: var(--accent2); font-weight: 600; }
+  .seg-btn.sel-green { border-color: var(--accent3); background: rgba(168,237,175,.12); color: var(--accent3); font-weight: 600; }
+
+  .btn {
+    width: 100%; padding: 13px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff;
+    font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: all .2s; box-shadow: 0 4px 20px rgba(124,106,247,.3);
+  }
+  .btn:hover { background: #9a8af9; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+
+  .hint {
+    font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace;
+    padding: 10px 12px; background: var(--surface);
+    border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; line-height: 1.6;
+  }
+
+  .result-row {
+    display: none; align-items: center; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; transition: border-color .2s;
+    animation: fadeUp .25s ease;
+  }
+  .result-row.show { display: flex; }
+  .result-row:hover { border-color: rgba(124,106,247,.35); }
+
+  .result-link {
+    flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--accent2); text-decoration: none;
+    word-break: break-all; line-height: 1.5; transition: color .15s;
+  }
+  .result-link:hover { color: #fff; text-decoration: underline; }
+
+  .copy-btn {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 13px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    font-family: 'Syne', sans-serif; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(124,106,247,.08); }
+  .copy-btn.ok { border-color: var(--accent3); color: var(--accent3); background: rgba(168,237,175,.08); }
+
+  /* API 说明卡片 */
+  .api-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px 24px;
+    margin-top: 28px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .api-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
+  }
+  .api-row {
+    display: flex; align-items: baseline; gap: 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.7;
+  }
+  .api-path { color: var(--accent2); flex-shrink: 0; }
+  .api-desc { color: var(--muted); }
+
+  .sub-note {
+    font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace;
+    padding: 10px 12px; background: var(--surface);
+    border-left: 3px solid var(--accent3); border-radius: 0 6px 6px 0;
+    line-height: 1.7; display: none;
+  }
+  .sub-note.show { display: block; }
+
+  footer {
+    margin-top: 48px; font-size: 12px; color: var(--muted);
+    font-family: 'JetBrains Mono', monospace; text-align: center;
+  }
 </style>
 </head>
 <body>
-<div class="box">
-  <div class="title">链接工具箱</div>
+<div class="glow"></div>
+<div class="wrap">
+  <header>
+    <div class="badge">Link Converter</div>
+    <h1>链接转换工具</h1>
+    <p>GitHub CDN 加速 &amp; 机场订阅注入</p>
+  </header>
 
-  <div class="row">
-    <input id="i0" placeholder="GitHub 文件链接（CDN 加速）">
-    <button class="btn-cdn" onclick="cdn(0)">CDN</button>
-    <a id="o0">等待输入</a>
-  </div>
-
-  <div class="sep"></div>
-
-  <div class="row">
-    <input id="i1" placeholder="GitHub 链接（gh-proxy.com）">
-    <button class="btn-gh" onclick="gh(1,0)">加速</button>
-    <a id="o1">等待输入</a>
-  </div>
-  <div class="row">
-    <input id="i2" placeholder="GitHub 链接（github.akams.cn）">
-    <button class="btn-gh" onclick="gh(2,1)">加速</button>
-    <a id="o2">等待输入</a>
-  </div>
-  <div class="row">
-    <input id="i3" placeholder="GitHub 链接（gh-proxy.org）">
-    <button class="btn-gh" onclick="gh(3,2)">加速</button>
-    <a id="o3">等待输入</a>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab(0)">jsDelivr CDN</button>
+    <button class="tab-btn" onclick="switchTab(1)">GitHub 代理加速</button>
+    <button class="tab-btn" onclick="switchTab(2)">订阅注入</button>
   </div>
 
-  <div class="sep"></div>
+  <!-- Tab 0 -->
+  <div class="card active" id="tab0">
+    <div class="card-title"><span class="dot dot-purple"></span>GitHub → jsDelivr CDN</div>
+    <div class="hint">支持 github.com/blob/ 或 raw.githubusercontent.com 格式</div>
+    <div>
+      <label>GitHub 链接</label>
+      <input type="text" id="jsdelivr-input" placeholder="https://github.com/user/repo/blob/main/file.js"/>
+    </div>
+    <button class="btn" onclick="convertJsdelivr()">转 换</button>
+    <div class="result-row" id="jsdelivr-row">
+      <a class="result-link" id="jsdelivr-link" href="#" target="_blank" rel="noopener"></a>
+      <button class="copy-btn" onclick="doCopy('jsdelivr-link',this)">⎘ 复制</button>
+    </div>
+  </div>
 
-  <div class="row">
-    <input id="i4" placeholder="订阅链接（FallBack Smart）">
-    <button class="btn-sub" onclick="sub(4,0)">转换</button>
-    <a id="o4">等待输入</a>
+  <!-- Tab 1 -->
+  <div class="card" id="tab1">
+    <div class="card-title"><span class="dot dot-blue"></span>GitHub 代理加速</div>
+    <div class="hint">选择线路后输入链接，只输出单条加速地址</div>
+    <div>
+      <label>选择代理线路</label>
+      <div class="seg-group" id="proxy-seg">
+        <button class="seg-btn sel-blue" data-idx="0" onclick="selSeg('proxy-seg',this,'sel-blue')">gh-proxy.com</button>
+        <button class="seg-btn"          data-idx="1" onclick="selSeg('proxy-seg',this,'sel-blue')">gh.llkk.cc</button>
+        <button class="seg-btn"          data-idx="2" onclick="selSeg('proxy-seg',this,'sel-blue')">gh-proxy.org</button>
+      </div>
+    </div>
+    <div>
+      <label>GitHub 链接</label>
+      <input type="text" id="ghproxy-input" placeholder="https://github.com/user/repo/releases/download/v1/file.zip"/>
+    </div>
+    <button class="btn" onclick="convertGhProxy()">转 换</button>
+    <div class="result-row" id="ghproxy-row">
+      <a class="result-link" id="ghproxy-link" href="#" target="_blank" rel="noopener"></a>
+      <button class="copy-btn" onclick="doCopy('ghproxy-link',this)">⎘ 复制</button>
+    </div>
   </div>
-  <div class="row">
-    <input id="i5" placeholder="订阅链接（OneSmart 极简版）">
-    <button class="btn-sub" onclick="sub(5,1)">转换</button>
-    <a id="o5">等待输入</a>
+
+  <!-- Tab 2 -->
+  <div class="card" id="tab2">
+    <div class="card-title"><span class="dot dot-green"></span>机场订阅注入 Clash 配置</div>
+    <div class="hint">选择模板 → 输入订阅链接 → 生成可直接填入 Clash 的配置直链</div>
+    <div>
+      <label>选择模板</label>
+      <div class="seg-group" id="tpl-seg">
+        <button class="seg-btn sel-green" data-idx="4" onclick="selSeg('tpl-seg',this,'sel-green')">模板 A</button>
+        <button class="seg-btn"           data-idx="5" onclick="selSeg('tpl-seg',this,'sel-green')">模板 B</button>
+        <button class="seg-btn"           data-idx="6" onclick="selSeg('tpl-seg',this,'sel-green')">模板 C</button>
+      </div>
+    </div>
+    <div>
+      <label>机场订阅链接</label>
+      <input type="text" id="sub-input" placeholder="https://your-airport.com/api/v1/client/subscribe?token=xxx"/>
+    </div>
+    <button class="btn" onclick="convertSub()">生成配置链接</button>
+    <div class="result-row" id="sub-row">
+      <a class="result-link" id="sub-link" href="#" target="_blank" rel="noopener"></a>
+      <button class="copy-btn" onclick="doCopy('sub-link',this)">⎘ 复制</button>
+    </div>
+    <div class="sub-note" id="sub-note">
+      ✦ 点击链接直接在浏览器查看注入后的完整 YAML<br>
+      ✦ 复制链接后可直接填入 Clash / Mihomo 订阅地址栏
+    </div>
   </div>
-  <div class="row">
-    <input id="i6" placeholder="订阅链接（Mihomo_Smart）">
-    <button class="btn-sub" onclick="sub(6,2)">转换</button>
-    <a id="o6">等待输入</a>
-  </div>
+
+  <footer>Cloudflare Workers · All in one worker.js</footer>
 </div>
 
 <script>
-const GP=['${GH_PROXY_1}','${GH_PROXY_2}','${GH_PROXY_3}'];
-const ST=['${SUB_TPL_1}','${SUB_TPL_2}','${SUB_TPL_3}'];
+const GH_PROXIES = ['https://gh-proxy.com/','https://gh.llkk.cc/','https://gh-proxy.org/'];
 
-function out(n,url){
-  const a=document.getElementById('o'+n);
-  a.textContent=url;a.href=url;a.target='_blank';a.classList.add('active');
+function switchTab(idx) {
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
+  document.querySelectorAll('.card').forEach((c,i)=>c.classList.toggle('active',i===idx));
 }
-function err(n,msg){
-  const a=document.getElementById('o'+n);
-  a.textContent=msg;a.removeAttribute('href');a.classList.remove('active');
+function selSeg(gid, btn, cls) {
+  document.querySelectorAll('#'+gid+' .seg-btn').forEach(b=>b.classList.remove('sel-blue','sel-green'));
+  btn.classList.add(cls);
 }
-
-function cdn(n){
-  const v=document.getElementById('i'+n).value.trim();
-  if(!v){err(n,'等待输入');return}
-  const m=v.match(/github\\.com\\/([^/]+)\\/([^/]+)\\/blob\\/([^/]+)\\/(.+)/);
-  if(!m){err(n,'格式错误：需要 github.com/.../blob/... 链接');return}
-  out(n,'${CDN_PREFIX}'+m[1]+'/'+m[2]+'@'+m[3]+'/'+m[4]);
+function getSegIdx(gid) {
+  const b = document.querySelector('#'+gid+' .seg-btn.sel-blue, #'+gid+' .seg-btn.sel-green');
+  return b ? parseInt(b.dataset.idx) : 0;
 }
-
-function gh(n,i){
-  const v=document.getElementById('i'+n).value.trim();
-  if(!v){err(n,'等待输入');return}
-  if(!GP[i]){err(n,'未配置');return}
-  const url=v.startsWith('http')?v:'https://'+v;
-  const p=GP[i];
-  out(n,p.endsWith('/')?p+url:p+'/'+url);
+function setResult(linkId, rowId, url) {
+  const a = document.getElementById(linkId);
+  a.href = url; a.textContent = url;
+  document.getElementById(rowId).classList.add('show');
+}
+function doCopy(linkId, btn) {
+  navigator.clipboard.writeText(document.getElementById(linkId).href).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ 已复制'; btn.classList.add('ok');
+    setTimeout(()=>{ btn.innerHTML = orig; btn.classList.remove('ok'); }, 2000);
+  });
 }
 
-async function sub(n,i){
-  const v=document.getElementById('i'+n).value.trim();
-  if(!v){err(n,'等待输入');return}
-  const a=document.getElementById('o'+n);
-  a.textContent='转换中...';a.removeAttribute('href');a.classList.remove('active');
-  try{
-    const r=await fetch('/convert',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subUrl:v,tplIndex:i})});
-    if(!r.ok){const d=await r.json().catch(()=>({}));err(n,d.error||'转换失败');return}
-    out(n,location.origin+'/convert?sub='+encodeURIComponent(v)+'&tpl='+i);
-  }catch(e){err(n,e.message||'请求失败');}
+async function convertJsdelivr() {
+  const url = document.getElementById('jsdelivr-input').value.trim();
+  if (!url) return;
+  const res = await fetch('/api/jsdelivr', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url})
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  setResult('jsdelivr-link','jsdelivr-row', data.result);
+}
+
+function convertGhProxy() {
+  const url = document.getElementById('ghproxy-input').value.trim();
+  if (!url) return;
+  if (!url.startsWith('http')) { alert('请输入完整链接'); return; }
+  const prefix = GH_PROXIES[getSegIdx('proxy-seg')];
+  setResult('ghproxy-link','ghproxy-row', prefix + url);
+}
+
+function convertSub() {
+  const url = document.getElementById('sub-input').value.trim();
+  if (!url) return;
+  const idx = getSegIdx('tpl-seg'); // 4/5/6
+  const subUrl = location.origin + '/' + idx + '/' + encodeURIComponent(url);
+  setResult('sub-link','sub-row', subUrl);
+  document.getElementById('sub-note').classList.add('show');
 }
 </script>
 </body>
 </html>`;
+
+// ============================================================
+//  Worker 路由
+// ============================================================
+
+export default {
+  async fetch(request) {
+    const reqUrl = new URL(request.url);
+    const raw    = reqUrl.pathname; // e.g. /1/https://github.com/...
+
+    // ── 首页 ────────────────────────────────────────────────
+    if (raw === '/' || raw === '') {
+      return new Response(HTML, { headers: { 'Content-Type': 'text/html;charset=UTF-8' } });
+    }
+
+    // ── POST API（前端 AJAX 调用） ───────────────────────────
+    if (raw === '/api/jsdelivr' && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return json({ error: '请求体解析失败' }, 400); }
+      try { return json({ result: toJsdelivr(body.url) }); }
+      catch (e) { return json({ error: e.message }, 400); }
+    }
+
+    // ── 直链路由解析 ─────────────────────────────────────────
+    // 格式：/[前缀数字/]<完整URL>
+    // 例：  /https://github.com/...
+    //       /1/https://github.com/...
+    //       /4/https://airport.com/...
+
+    // 去掉开头的 /
+    const stripped = raw.slice(1);
+
+    // 判断是否以数字前缀开头：/1/... /2/... /3/... /4/... /5/... /6/...
+    const prefixMatch = stripped.match(/^([1-6])\/(https?:\/\/.+)$/s);
+    const plainMatch  = !prefixMatch && stripped.match(/^(https?:\/\/.+)$/s);
+
+    let prefix = 0;   // 0 = jsDelivr
+    let targetUrl = '';
+
+    if (prefixMatch) {
+      prefix    = parseInt(prefixMatch[1]);
+      targetUrl = prefixMatch[2];
+    } else if (plainMatch) {
+      prefix    = 0;
+      targetUrl = plainMatch[1];
+    } else {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    // 还原可能被编码的 URL
+    try { targetUrl = decodeURIComponent(targetUrl); } catch {}
+
+    // ── prefix 0：jsDelivr，302 跳转 ────────────────────────
+    if (prefix === 0) {
+      try {
+        const cdn = toJsdelivr(targetUrl);
+        return Response.redirect(cdn, 302);
+      } catch (e) {
+        return new Response(e.message, { status: 400 });
+      }
+    }
+
+    // ── prefix 1-3：gh-proxy，302 跳转 ──────────────────────
+    if (prefix >= 1 && prefix <= 3) {
+      const proxyBase = GH_PROXIES[prefix - 1];
+      return Response.redirect(proxyBase + targetUrl, 302);
+    }
+
+    // ── prefix 4-6：订阅注入，返回 YAML ─────────────────────
+    if (prefix >= 4 && prefix <= 6) {
+      const tmplUrl = TEMPLATES[prefix];
+      try {
+        const yaml = await buildSub(tmplUrl, targetUrl);
+        return new Response(yaml, {
+          headers: {
+            'Content-Type': 'text/plain;charset=UTF-8',
+            'Content-Disposition': 'inline; filename="clash-config.yaml"',
+            'Profile-Update-Interval': '24',
+            'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0',
+          },
+        });
+      } catch (e) {
+        return new Response(e.message, { status: 500 });
+      }
+    }
+
+    return new Response('Not Found', { status: 404 });
+  },
+};
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+  });
+}
