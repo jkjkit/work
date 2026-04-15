@@ -5,8 +5,10 @@ export default {
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>直播工具集</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>直播源转换</title>
+
+<link rel="icon" href="https://api.iconify.design/material-icon-theme:3d.svg?color=%237c3aed" type="image/svg+xml">
+
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -22,6 +24,8 @@ export default {
   --green:  #4a9268;
   --sky:    #3a7ca5;
   --rose:   #c0614a;
+  --sans:   -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:   ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
 }
 
 html,body{
@@ -29,7 +33,7 @@ html,body{
   overflow:hidden;
   background:var(--bg);
   color:var(--text);
-  font-family:'Outfit',sans-serif;
+  font-family:var(--sans);
   font-size:14px;
   display:flex;
   align-items:center;
@@ -55,7 +59,7 @@ html,body{
   flex-shrink:0;
 }
 .apptitle h1{
-  font-family:'Outfit',sans-serif;
+  font-family:var(--sans);
   font-size:16px;
   font-weight:500;
   letter-spacing:.08em;
@@ -78,7 +82,7 @@ html,body{
   border:none;
   border-bottom:2px solid transparent;
   color:var(--muted);
-  font-family:'Outfit',sans-serif;
+  font-family:var(--sans);
   font-size:13px;
   font-weight:500;
   letter-spacing:.04em;
@@ -110,7 +114,7 @@ html,body{
 }
 .col+.col{padding-left:12px;border-left:1px solid var(--border);}
 .col-head{
-  font-family:'Fira Code',monospace;
+  font-family:var(--mono);
   font-size:10px;
   letter-spacing:.12em;
   text-transform:uppercase;
@@ -125,7 +129,7 @@ textarea{
   border:1px solid var(--border);
   border-radius:7px;
   color:var(--text);
-  font-family:'Fira Code',monospace;
+  font-family:var(--mono);
   font-size:12px;
   line-height:1.7;
   padding:12px 14px;
@@ -140,7 +144,7 @@ textarea[readonly]{background:#f5f3f0;}
 .url-row{display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;}
 .url-row input{
   flex:1;background:var(--well);border:1px solid var(--border);border-radius:7px;
-  color:var(--text);font-family:'Fira Code',monospace;font-size:12px;padding:8px 12px;
+  color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 12px;
   transition:border-color .15s;
 }
 .url-row input:focus{outline:none;border-color:var(--accent);}
@@ -151,7 +155,7 @@ textarea[readonly]{background:#f5f3f0;}
   display:flex;justify-content:center;gap:8px;padding-top:10px;flex-shrink:0;
 }
 .btn{
-  font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;
+  font-family:var(--sans);font-size:13px;font-weight:500;
   padding:6px 20px;border-radius:6px;border:1px solid transparent;cursor:pointer;
   letter-spacing:.02em;transition:filter .15s,transform .1s;
 }
@@ -160,6 +164,7 @@ textarea[readonly]{background:#f5f3f0;}
 .btn-a{background:#dce8f5;color:var(--sky);border-color:#c2d8ef;}
 .btn-b{background:#d9f0e4;color:var(--green);border-color:#b8dfc9;}
 .btn-c{background:#e8e4de;color:var(--muted);border-color:var(--border);}
+.btn-d{background:#e8e4de;color:var(--muted);border-color:var(--border);}
 
 /* scrollbar */
 textarea::-webkit-scrollbar{width:5px;}
@@ -172,7 +177,7 @@ textarea::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
   position:fixed;bottom:24px;left:50%;
   transform:translateX(-50%) translateY(10px);
   background:var(--accent);color:#fff;
-  font-family:'Outfit',sans-serif;font-size:13px;font-weight:500;
+  font-family:var(--sans);font-size:13px;font-weight:500;
   padding:6px 20px;border-radius:20px;pointer-events:none;
   opacity:0;transition:opacity .25s,transform .25s;
 }
@@ -205,6 +210,7 @@ textarea::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
       <button class="btn btn-a" onclick="toM3U()">TXT → M3U</button>
       <button class="btn btn-a" onclick="toTXT()">M3U → TXT</button>
       <button class="btn btn-b" onclick="cp('m3uOut')">复制结果</button>
+      <button class="btn btn-d" onclick="dl('m3uOut','playlist')">下载</button>
       <button class="btn btn-c" onclick="clr('m3uIn','m3uOut')">清除</button>
     </div>
   </div>
@@ -225,6 +231,7 @@ textarea::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
       <button class="btn btn-a" onclick="toSimp()">繁 → 简</button>
       <button class="btn btn-a" onclick="toTrad()">简 → 繁</button>
       <button class="btn btn-b" onclick="cp('cnOut')">复制结果</button>
+      <button class="btn btn-d" onclick="dl('cnOut','converted')">下载</button>
       <button class="btn btn-c" onclick="clr('cnIn','cnOut')">清除</button>
     </div>
   </div>
@@ -243,6 +250,7 @@ textarea::-webkit-scrollbar-thumb{background:var(--dim);border-radius:3px;}
     </div>
     <div class="actions">
       <button class="btn btn-b" onclick="cp('decOut')">复制结果</button>
+      <button class="btn btn-d" onclick="dl('decOut','decrypted')">下载</button>
       <button class="btn btn-c" onclick="clr('urlIn','decOut')">清除</button>
     </div>
   </div>
@@ -267,6 +275,17 @@ function cp(id){
   clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1600);
 }
 function clr(...ids){ids.forEach(id=>{const e=document.getElementById(id);if(e)e.value=''});}
+
+function dl(id,name){
+  const val=document.getElementById(id).value;
+  if(!val)return;
+  const ext=val.trimStart().startsWith('#EXTM3U')?'m3u':'txt';
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([val],{type:'text/plain;charset=utf-8'}));
+  a.download=name+'.'+ext;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 function toM3U(){
   const lines=document.getElementById('m3uIn').value.trim().split('\\n');
