@@ -1,4 +1,4 @@
-const YAML_TEMPLATE = "https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/Clash.yaml";
+const YAML_TEMPLATE = "https://raw.githubusercontent.com/jkjkit/clash/refs/heads/main/c.yml";
 const CONVERTER    = "https://subapi.cmliussss.net/sub";
 const CONV_CONFIG  = "https://cdn.jsdelivr.net/gh/SleepyHeeead/subconverter-config@master/remote-config/special/basic.ini";
 
@@ -15,7 +15,10 @@ export default {
       if (format === "yaml") {
         try {
           const tmpl = await (await fetch(YAML_TEMPLATE)).text();
-          const yaml = tmpl.replace(/proxies:\s*/, "proxies:\n" + content + "\n\n");
+          const hasNodes = /proxies:\s*\n\s*-\s/.test(tmpl);
+          const yaml = hasNodes
+            ? tmpl.replace(/proxies:\s*\n/, "proxies:\n" + content + "\n")
+            : tmpl.replace(/proxies:\s*/, "proxies:\n" + content + "\n");
           return new Response(yaml, { headers: { "Content-Type": "text/yaml;charset=UTF-8" } });
         } catch { return new Response("Template Error", { status: 500 }); }
       }
@@ -106,10 +109,10 @@ function getBody() {
         <div class="space-y-2">
           <p class="text-[10px] font-bold text-gray-400 uppercase">订阅链接</p>
           <input id="subInput" type="text" class="input-box" placeholder="订阅链接...">
-          <p class="text-[10px] font-bold text-gray-400 uppercase pt-1">解析格式</p>
+          <p class="text-[10px] font-bold text-gray-400 uppercase pt-1">转换格式</p>
           <select id="convertTarget" class="input-box text-[11px]">
             <option value="clash">Clash (YAML)</option>
-            <option value="mixed">V2Ray (URI)</option>
+            <option value="mixed">URI List</option>
           </select>
           <div class="flex gap-2">
             <button id="btnParse"  onclick="handleFetch(false)" class="flex-1 bg-[#2d2d2d] btn">解析</button>
@@ -119,8 +122,8 @@ function getBody() {
 
         <!-- Manual input -->
         <div class="flex-1 flex flex-col min-h-0 space-y-2">
-          <p class="text-[10px] font-bold text-gray-400 uppercase">添加节点</p>
-          <textarea id="manualInput" class="input-box mono resize-none" placeholder="Vmess/Vless/Trojan/Hysteria2/...URI"></textarea>
+          <p class="text-[10px] font-bold text-gray-400 uppercase">手动输入</p>
+          <textarea id="manualInput" class="input-box mono resize-none"></textarea>
           <button onclick="handleManualAdd()" class="w-full bg-[#168544] btn">导入节点</button>
         </div>
 
@@ -380,6 +383,8 @@ function getHtml() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>节点管理</title>
+  <link rel="icon" href="https://api.iconify.design/lucide:network.svg?color=%237c3aed" type="image/svg+xml">
   <script src="https://cdn.tailwindcss.com"><\/script>
   <style>${getStyles()}</style>
 </head>
