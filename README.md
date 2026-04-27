@@ -4,13 +4,13 @@
 
 在代码里配置好拼接链接
 
-<img src="https://img.feria.eu.org/0x5suy.png" alt="nav.png" style="zoom:50%;" />
+<img src="https://i.imgant.com/v2/DrljklG.png" alt="nav.png" style="zoom:50%;" />
 
 ##### m3u——直播源转换
 
 纯前端实现转换
 
-<img src="https://img.feria.eu.org/tu319l.png" alt="nav.png" style="zoom:50%;" />
+<img src="https://img.imgdd.com/dada6686-9315-4851-8dad-48ebb2307841.png" alt="nav.png" style="zoom:50%;" />
 
 ##### nav——书签导航栏
 
