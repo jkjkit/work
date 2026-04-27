@@ -1,4 +1,4 @@
-#万能代理，慎用（封号）
+// 万能代理，慎用（封号）
 
 export default {
   async fetch(request) {
