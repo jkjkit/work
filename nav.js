@@ -75,6 +75,11 @@ main{max-width:900px;margin:0 auto;padding:44px 24px 80px}
 .site-from{font-size:9px;color:var(--accent);font-family:'Syne',sans-serif;font-weight:700;letter-spacing:.5px;margin-top:2px;opacity:.8}
 #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);padding:10px 18px;background:var(--text);color:var(--bg);border-radius:8px;font-size:13px;z-index:400;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap}
 #toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.clock-wrap{display:flex;flex-direction:column;align-items:center;gap:1px;position:absolute;left:50%;transform:translateX(-50%)}
+.clock-time{font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:0.5px}
+.clock-saved{font-size:10px;color:var(--muted);font-family:'Noto Sans SC',sans-serif;text-align:center}
+.clock-saved span{color:var(--accent)}
+.date-bar{font-size:12px;color:var(--muted);font-family:'Noto Sans SC',sans-serif;margin-bottom:12px}
 `;
 
 /* ─── Admin 专用 CSS ─── */
@@ -228,12 +233,34 @@ document.getElementById('search-btn').onclick=doSearch;
 document.getElementById('search-input').addEventListener('keydown',function(e){if(e.key==='Enter')doSearch();});
 function doSearch(){var q=document.getElementById('search-input').value.trim();if(!q)return;window.open(engines[activeEngine].url+encodeURIComponent(q),'_blank');}
 
+/* 时钟 */
+var WEEKDAYS=['周日','周一','周二','周三','周四','周五','周六'];
+function tickClock(){
+  var now=new Date();
+  var hh=String(now.getHours()).padStart(2,'0');
+  var mm=String(now.getMinutes()).padStart(2,'0');
+  var ss=String(now.getSeconds()).padStart(2,'0');
+  var el=document.getElementById('clock-time');if(el)el.textContent=hh+':'+mm+':'+ss;
+  var dateStr=now.getFullYear()+'年'+(now.getMonth()+1)+'月'+now.getDate()+'日  '+WEEKDAYS[now.getDay()];
+  var el2=document.getElementById('date-bar');if(el2)el2.textContent=dateStr;
+}
+function updateSavedAt(ts){
+  var el=document.getElementById('clock-saved');if(!el)return;
+  if(!ts){el.innerHTML='修改于 <span>暂无记录</span>';return;}
+  var d=new Date(ts);
+  var str=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  el.innerHTML='修改于 <span>'+str+'</span>';
+}
+tickClock();setInterval(tickClock,1000);
+
 /* 数据加载（admin 验证后调用，viewer 直接调用） */
 function loadData(){
   fetch('/api/data').then(function(r){return r.json();}).then(function(d){
     window._loadedAt=d._savedAt||0; // 记录服务端时间戳，用于冲突检测
+    updateSavedAt(d._savedAt||0);
     state=d;state.groups.forEach(function(g){g.open=false;});render();
   }).catch(function(){
+    updateSavedAt(0);
     state=JSON.parse(JSON.stringify(${defaultDataJson}));
     state.groups.forEach(function(g){g.open=false;});render();
   });
@@ -285,6 +312,7 @@ document.getElementById('save-btn').onclick=function(){
     btn.disabled=false;btn.textContent='保存';
     if(r.ok){
       window._loadedAt=Date.now(); // 更新本地时间戳
+      updateSavedAt(window._loadedAt);
       showToast('已保存到云端 ✓');
     }else if(r.status===409){showToast('数据已被他处修改，请刷新后重试',true);}
     else if(r.status===401){showToast('密码已失效，请刷新页面重新登录',true);}
@@ -510,9 +538,14 @@ function getViewerHTML(defaultDataJson) {
 <body>
 <header>
   <a class="logo" href="/">NAV<em>.</em></a>
+  <div class="clock-wrap">
+    <span class="clock-time" id="clock-time">00:00:00</span>
+    <div class="clock-saved" id="clock-saved">修改于 <span>加载中…</span></div>
+  </div>
   <div class="hdr-right"><button class="icon-btn" id="theme-btn" title="切换主题">🌙</button></div>
 </header>
 <main>
+  <div class="date-bar" id="date-bar"></div>
   <div class="search-wrap">
     <div class="search-box">
       <input class="search-input" id="search-input" type="text" placeholder="搜索…" autocomplete="off">
@@ -562,6 +595,10 @@ function getAdminHTML(defaultDataJson) {
 
 <header>
   <a class="logo" href="/">NAV<em>.</em></a>
+  <div class="clock-wrap">
+    <span class="clock-time" id="clock-time">00:00:00</span>
+    <div class="clock-saved" id="clock-saved">修改于 <span>加载中…</span></div>
+  </div>
   <div class="hdr-right">
     <span class="admin-badge">ADMIN</span>
     <button class="icon-btn" id="theme-btn" title="切换主题">🌙</button>
@@ -570,6 +607,7 @@ function getAdminHTML(defaultDataJson) {
 </header>
 
 <main>
+  <div class="date-bar" id="date-bar"></div>
   <div class="search-wrap">
     <div class="search-box">
       <input class="search-input" id="search-input" type="text" placeholder="搜索…" autocomplete="off">
